@@ -72,7 +72,7 @@ upsert "repositories/$REPOSITORY/releaseConfigs" production \
 COMPILATION="$(call POST "repositories/$REPOSITORY/compilationResults" \
   "{\"releaseConfig\":\"$REPO_PATH/releaseConfigs/production\"}" | python3 -c 'import json,sys; d=json.load(sys.stdin); errs=d.get("compilationErrors", []); [print("compilation error:", e, file=sys.stderr) for e in errs]; print(d["name"]); sys.exit(1 if errs else 0)')"
 call PATCH "repositories/$REPOSITORY/releaseConfigs/production?updateMask=releaseCompilationResult" \
-  "{\"releaseCompilationResult\":\"$COMPILATION\"}" >/dev/null
+  "{\"gitCommitish\":\"main\",\"releaseCompilationResult\":\"$COMPILATION\"}" >/dev/null
 
 upsert "repositories/$REPOSITORY/workflowConfigs" hourly \
   "{\"releaseConfig\":\"$REPO_PATH/releaseConfigs/production\",\"cronSchedule\":\"5 * * * *\",\"timeZone\":\"America/Mexico_City\",\"invocationConfig\":{\"serviceAccount\":\"$DATAFORM_SA\"}}" >/dev/null

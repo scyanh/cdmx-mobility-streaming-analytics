@@ -26,7 +26,7 @@ gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1 \
 # --- BigQuery ----------------------------------------------------------------------------------
 export PROJECT BRONZE_DATASET BQ_LOCATION
 envsubst < bronze.sql | bq --project_id "$PROJECT" query --nouse_legacy_sql >/dev/null
-for ds in "$REF_DATASET" "$SILVER_DATASET" "$GOLD_DATASET" "$ASSERTIONS_DATASET"; do
+for ds in "$REF_DATASET" "$SILVER_DATASET" "$GOLD_DATASET" "$ASSERTIONS_DATASET" "$DASHBOARD_DATASET"; do
   bq --project_id "$PROJECT" show "$PROJECT:$ds" >/dev/null 2>&1 \
     || bq --project_id "$PROJECT" mk --location "$BQ_LOCATION" --dataset "$PROJECT:$ds" >/dev/null
 done
@@ -67,10 +67,10 @@ PY
 }
 bq_grant "$BRONZE_DATASET" "$DATAFLOW_SA" WRITER
 
-# Dataform: read bronze and ref, own silver, gold and assertions, run query jobs.
+# Dataform: read bronze and ref, own silver, gold, assertions and dashboard, run query jobs.
 bq_grant "$BRONZE_DATASET" "$DATAFORM_SA" READER
 bq_grant "$REF_DATASET" "$DATAFORM_SA" READER
-for ds in "$SILVER_DATASET" "$GOLD_DATASET" "$ASSERTIONS_DATASET"; do
+for ds in "$SILVER_DATASET" "$GOLD_DATASET" "$ASSERTIONS_DATASET" "$DASHBOARD_DATASET"; do
   bq_grant "$ds" "$DATAFORM_SA" WRITER
 done
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$DATAFORM_SA" \

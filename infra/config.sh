@@ -12,6 +12,7 @@ REF_DATASET="${REF_DATASET:-mobility_ref}"
 SILVER_DATASET="${SILVER_DATASET:-mobility_silver}"
 GOLD_DATASET="${GOLD_DATASET:-mobility_gold}"
 ASSERTIONS_DATASET="${ASSERTIONS_DATASET:-mobility_assertions}"
+DASHBOARD_DATASET="${DASHBOARD_DATASET:-mobility_dashboard}"
 
 POLLER_SERVICE="${POLLER_SERVICE:-ecobici-poller}"
 SCHEDULER_JOB="${SCHEDULER_JOB:-ecobici-poll}"

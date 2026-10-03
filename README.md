@@ -8,13 +8,51 @@
 ![Looker](https://img.shields.io/badge/Looker-LookML-4285F4)
 ![Data Studio](https://img.shields.io/badge/Data_Studio-dashboard-4285F4)
 
-A streaming pipeline on Google Cloud for **ECOBICI**, Mexico City's public bike system. Every minute a poller reads the live feed of all 677 stations and publishes one event per station. A **Dataflow** job validates the events and streams them into **BigQuery**, and **Dataform** turns them into availability, trips and unmet demand per colonia and hour. Three **Looker** dashboards sit on top: what is happening now, the patterns over time, and where riders find no bike. Those empty stations are the gap a ride or courier service like Tlanova could fill.
-
-A year of ECOBICI's published trip history (18.7 million trips) is loaded next to the stream, and a three-page **Data Studio** dashboard tells the story of when, where and who rides, plus the state of the network right now.
+**ECOBICI**, Mexico City's public bike system, moves about 57,000 trips on a normal weekday across 677 stations. This project follows it on Google Cloud in two ways: a year of published trip history (18.7 million trips) to learn its patterns, and a live stream of every station, polled every minute, to see where riders find no bike right now. Those empty stations are the gap a ride or courier service like Tlanova could fill.
 
 Data: [ECOBICI GBFS feed](https://gbfs.mex.lyftbikes.com/gbfs/gbfs.json) (open, updated every ~10 s), [ECOBICI open trip data](https://ecobici.cdmx.gob.mx/datos-abiertos/) (one CSV per month) and the [colonias of Mexico City](https://datos.cdmx.gob.mx/dataset/coloniascdmx) (IECM, Portal de Datos Abiertos CDMX).
 
-## Architecture
+## The story
+
+The dashboard is built in Data Studio (formerly Looker Studio) on the views in `mobility_dashboard` ([`definitions/dashboard/`](definitions/dashboard)). Every chart answers one question and states what it shows.
+
+### 1. When does the city ride?
+
+![Average trips per hour, weekday vs weekend](looker_1.png)
+
+ECOBICI is a commuter system first. Weekdays have two rush hours, 8:00 (4,600 trips an hour) and 18:00 (5,000), the ride to work and back, with a midday bump in between that keeps bikes moving. Weekends follow a single gentle curve that peaks at 13:00 (3,200). The practical consequence: on weekdays the bikes have to be at the commuter stations before 8:00, and there has to be room to return them before 18:00.
+
+### 2. How does riding change over the year?
+
+![Trips per day, Oct 2025 to Sep 2026](looker_2.png)
+
+A normal weekday has 55,000–62,000 trips and a weekend day 34,000–40,000, all year round. Public holidays fall to weekend levels (Sep 16, Nov 17, Feb 2, Mar 16 and Holy Week), and the low of the year is the Christmas break: 11,600 trips on Dec 25 and 13,100 on Jan 1. October is the busiest month, with 1.75 million trips. Holidays and school breaks are the cheapest days for maintenance and bike rotation.
+
+### 3. Who rides?
+
+![Trips by age group and gender](looker_3.png)
+
+Riders aged 25–44 take 73% of all trips, and the 25–34 group alone takes 46%. Women take 29% of trips, and their share falls with age: 32% at 25–34, 23% at 45–54 and 16% over 65. Trips are short for everyone, about 12 minutes at the median in every group. Women and riders over 45 are where the system has the most room to grow, which points to safer lanes and outreach rather than more stations.
+
+### 4. Where do the bikes go?
+
+![Busiest stations, bubble map](looker_4.png)
+
+Demand is concentrated in a small core. Cuauhtémoc, Benito Juárez and Miguel Hidalgo hold 88% of the stations and 94% of the trips (51,000, 24,000 and 21,000 trip starts and ends a day). The busiest station is Jesús García – Carlos J. Meneses in Buenavista, next to the suburban train terminal, with 892 trip starts and ends a day, a third more than the runner-up (657). The rest of the top five sit on Reforma, in Condesa and in Polanco: offices and transit hubs, not homes.
+
+The same page follows the morning commute: between 7:00 and 10:00 on a weekday, Buenavista II loses 376 bikes while the office districts along Reforma gain them (colonia Cuauhtémoc +531, Juárez +362). That one-way flow is why rebalancing trucks are needed every morning. The 50 most repeated routes are all short hops (median 2.5–12 minutes), many in out-and-back pairs.
+
+### 5. Right now
+
+![Live map of every station](looker_5.png)
+
+The last page comes from the streaming layer, not the history: every station colored by how many of its docks hold a bike, seconds behind the feed. Green stations have bikes to spare and red ones have none or almost none. It is the view a rebalancing crew needs (pick up where the map is green, drop where it is red), and it is where the next question starts.
+
+### 6. What comes next: where riders find no bike
+
+The history shows when and where people ride; it cannot show the trips that never happened because a station was empty. The stream can. Gold estimates, for every colonia and hour of a typical week, the trips that could not start: each station's departure rate while it had bikes, times the minutes it sat empty (see [`zone_opportunity`](definitions/gold/zone_opportunity.sqlx)). Those colonia-hour slots are where a ride or courier service could offer the trip instead. The estimate needs days of streaming data; until a slot has three days behind it, it is labeled `confidence = low`. The first hours already point at the commuter core: colonia Cuauhtémoc and Del Valle II, with stations empty 20–30% of the time on a Saturday morning.
+
+## How the data gets there
 
 ```mermaid
 flowchart TB
@@ -38,39 +76,29 @@ flowchart TB
     DASH --> DS[Data Studio dashboard<br/>3 pages]
 ```
 
+### Under the hood
+
+The hourly Dataform workflow in BigQuery, building silver, gold, the live dashboard views and their assertions, every step green:
+
+![Dataform workflow execution](dataform.png)
+
+And the layers it builds, side by side in BigQuery (here `mobility_gold.station_hour`, one row per station and hour with its colonia):
+
+![BigQuery datasets: bronze, silver, gold](bigquery.png)
+
 ## Status
 
-Deployed on project `flow-eed16` on 2026-10-03 and collecting. First 26 minutes:
+Deployed on project `flow-eed16` on 2026-10-03 and collecting. First 4 hours 14 minutes (16:48–21:02 UTC):
 
 | | |
 |---|---|
-| Polls | 26 of 27 scheduled minutes (one lost to a redeploy) |
-| Messages published | ~17,600 (677 per poll) |
-| Distinct station states in bronze | 3,123 (about 97 per poll; the rest were repeats dropped by Dataflow) |
+| Polls | 254 of 255 scheduled minutes (one lost to a redeploy) |
+| Messages published | ~172,000 (677 per poll) |
+| Distinct station states in bronze | 28,029 (about 110 per poll; repeats of unchanged stations were dropped by Dataflow) |
 | Rejected to the DLQ | 0 |
-| Pub/Sub publish → BigQuery row | p50 0.98 s, p95 1.5 s |
-| Feed poll → BigQuery row | p50 1.4 s |
+| Pub/Sub publish → BigQuery row | p50 1.0 s, p95 2.3 s |
+| Feed poll → BigQuery row | p50 1.5 s |
 | Stations matched to a colonia | 677 of 677, in 144 colonias across 6 alcaldías |
-| Stations stale at poll time (no report in over an hour) | ~20–28, kept and flagged |
-
-The opportunity ranking needs days of history: every row says how many days back it, and anything under three days per day type is labeled `confidence = low`. A first look at Saturday 10:00–12:00 already puts the colonias Cuauhtémoc (along Reforma) and Del Valle II at the top, with stations empty 20–30% of the time.
-
-## Dashboard
-
-Built in Data Studio (formerly Looker Studio) on the views in `mobility_dashboard` ([`definitions/dashboard/`](definitions/dashboard)). Each section asks a question, explains how to read the chart and states what it shows.
-
-**1. When and who rides** (trip history, Oct 2025 – Sep 2026)
-- *When does the city ride?* Weekdays have two rush hours, 8:00 (4,600 trips an hour) and 18:00 (5,000); weekends follow one gentle curve that peaks at 13:00 (3,200).
-- *How does riding change over the year?* A normal weekday has 55,000–62,000 trips and a weekend day 34,000–40,000. Public holidays drop to weekend levels, and the year's low is the Christmas break: 11,600 trips on Dec 25.
-- *Who rides?* Riders aged 25–44 take 73% of the trips. Women take 29%, and their share falls with age, from 32% at 25–34 to 16% over 65.
-
-**2. Where the bikes go**
-- *Where are the busiest stations?* Bubble map of all stations. Cuauhtémoc, Benito Juárez and Miguel Hidalgo hold 88% of the stations and 94% of the trips; the busiest station, next to the Buenavista suburban train terminal, has 892 trips a day.
-- *Where do bikes pile up every morning?* Net bikes per colonia between 7:00 and 10:00 on weekdays. Buenavista II loses 376 bikes every morning, and the office districts along Reforma gain them (Cuauhtémoc +531, Juárez +362).
-- *Which trips do people repeat the most?* The 50 most frequent routes: all short hops (median 2.5–12 minutes), many in out-and-back pairs.
-
-**3. Right now (live)**
-- KPIs and a map of every station colored by the share of its docks that hold a bike, from the streaming layer (seconds behind the feed), and the colonias with the most empty stations right now.
 
 ## How it works
 
@@ -117,7 +145,7 @@ Built in Data Studio (formerly Looker Studio) on the views in `mobility_dashboar
 
 ## Design decisions
 
-- **Two layers of deduplication, one ID.** Dataflow's `id_label` removes most repeats in flight (in the first 26 minutes, 3,123 rows from 17,600 messages); the silver `MERGE` removes whatever crosses the 10-minute window or arrives after a restart. Both rely on the poller's deterministic ID, so the poller can stay stateless and retry freely.
+- **Two layers of deduplication, one ID.** Dataflow's `id_label` removes repeats in flight (in the first four hours, 28,029 rows from about 172,000 messages, with no `event_id` reaching bronze twice); the silver `MERGE` is the safety net for anything that slips past Dataflow's dedup window or arrives after a job restart. Both rely on the poller's deterministic ID, so the poller can stay stateless and retry freely.
 - **Time-weighted availability by sampling, not by interval arithmetic.** Dataflow's dedup removes the repeats that would show how long a state lasted, so gold rebuilds it: every station at every poll, with its last known state. Missing polls become unobserved minutes instead of being filled in.
 - **Trust window.** Stations re-send their state every few minutes while online (median report age about 6 minutes). A state older than an hour is treated as unknown, which keeps a station that has been offline for months from counting as "empty".
 - **Live data skips the batch layer.** The live views read bronze directly (last 3 hours), so the live dashboard is seconds behind the feed, while the heavier gold tables rebuild hourly.
