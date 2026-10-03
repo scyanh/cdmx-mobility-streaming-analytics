@@ -1,0 +1,35 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Average departures and arrivals per day for every station that is in the live feed, with its location for the map.",
+  assertions: {
+    uniqueKey: ["station_code"]
+  }
+}
+
+WITH days AS (
+  SELECT COUNT(DISTINCT DATE(started_at)) AS n FROM ${ref("trips")}
+),
+
+departures AS (
+  SELECT start_station_code AS station_code, COUNT(*) AS trips FROM ${ref("trips")} GROUP BY 1
+),
+
+arrivals AS (
+  SELECT end_station_code AS station_code, COUNT(*) AS trips FROM ${ref("trips")} GROUP BY 1
+)
+
+SELECT
+  s.station_code,
+  s.station,
+  s.colonia,
+  s.alcaldia,
+  s.location,
+  ROUND(COALESCE(d.trips, 0) / days.n, 1) AS departures_per_day,
+  ROUND(COALESCE(a.trips, 0) / days.n, 1) AS arrivals_per_day,
+  ROUND((COALESCE(d.trips, 0) + COALESCE(a.trips, 0)) / days.n, 1) AS trips_per_day
+FROM ${ref("station_lookup")} AS s
+CROSS JOIN days
+LEFT JOIN departures AS d USING (station_code)
+LEFT JOIN arrivals AS a USING (station_code)

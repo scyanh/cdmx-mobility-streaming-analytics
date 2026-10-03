@@ -1,0 +1,41 @@
+config {
+  type: "view",
+  schema: "mobility_gold",
+  description: "Latest state of every station, read straight from bronze so it is as fresh as the stream (seconds), not as the last Dataform run."
+}
+
+WITH latest AS (
+  SELECT *
+  FROM ${ref("station_status_raw")}
+  WHERE DATE(ingest_ts) >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND ingest_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 HOUR)
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY station_id ORDER BY event_ts DESC, ingest_ts) = 1
+)
+
+SELECT
+  l.station_id,
+  s.station_name,
+  s.station_code,
+  s.colonia_id,
+  s.colonia,
+  s.alcaldia,
+  s.lat,
+  s.lon,
+  s.capacity,
+  l.event_ts AS reported_at,
+  l.polled_at,
+  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.event_ts, SECOND) AS report_age_seconds,
+  l.num_bikes_available,
+  l.num_bikes_disabled,
+  l.num_docks_available,
+  l.num_docks_disabled,
+  CASE
+    WHEN l.is_installed IS FALSE OR TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), l.event_ts, MINUTE) > ${dataform.projectConfig.vars.trusted_state_minutes} THEN "offline"
+    WHEN l.is_renting IS FALSE THEN "not renting"
+    WHEN l.num_bikes_available = 0 THEN "empty"
+    WHEN l.num_docks_available = 0 THEN "full"
+    WHEN l.num_bikes_available <= 2 THEN "low"
+    ELSE "ok"
+  END AS status
+FROM latest AS l
+LEFT JOIN ${ref("stations")} AS s USING (station_id)

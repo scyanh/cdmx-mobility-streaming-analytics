@@ -1,0 +1,19 @@
+defaultProject: flow-eed16
+defaultLocation: US
+defaultDataset: mobility_silver
+defaultAssertionDataset: mobility_assertions
+dataformCoreVersion: 3.0.71
+vars:
+  # A station re-sends its state at least every few minutes while it is online. A state older
+  # than this is not trusted: the time counts as unobserved, not as empty or full.
+  trusted_state_minutes: "60"
+  # A drop or rise of this many bikes between two reports is a rebalancing truck, not riders.
+  rebalance_min_bikes: "5"
+  # Silver re-reads this much bronze before its last load, for rows that were still in the
+  # streaming buffer; the MERGE on event_id makes the overlap harmless.
+  silver_overlap_minutes: "30"
+  # Opportunity estimates backed by fewer days than this are labeled low confidence.
+  min_days_confident: "3"
+  # The trip history (silver.trips and the dashboard views over it) is rebuilt only on demand, with
+  # --vars=include_history=true: the hourly job would otherwise re-read ~1 GB of trips every hour.
+  include_history: "false"

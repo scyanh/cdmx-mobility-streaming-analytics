@@ -1,0 +1,21 @@
+config {
+  type: "view",
+  schema: "mobility_gold",
+  description: "Current availability per colonia, from station_status_live."
+}
+
+SELECT
+  colonia_id,
+  colonia,
+  alcaldia,
+  COUNT(*) AS stations,
+  COUNTIF(status = "empty") AS empty_stations,
+  COUNTIF(status = "full") AS full_stations,
+  COUNTIF(status = "offline") AS offline_stations,
+  SUM(IF(status != "offline", num_bikes_available, 0)) AS bikes_available,
+  SUM(IF(status != "offline", num_docks_available, 0)) AS docks_available,
+  SAFE_DIVIDE(COUNTIF(status = "empty"), COUNTIF(status != "offline")) AS pct_stations_empty,
+  MAX(polled_at) AS last_polled_at
+FROM ${ref("station_status_live")}
+WHERE colonia_id IS NOT NULL
+GROUP BY colonia_id, colonia, alcaldia

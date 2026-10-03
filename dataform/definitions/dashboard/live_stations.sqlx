@@ -1,0 +1,23 @@
+config {
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Every station right now (from the streaming layer, seconds behind the feed) with a readable status and a 'lat,lon' field for the map."
+}
+
+SELECT
+  TRIM(REGEXP_REPLACE(station_name, r'^CE-[\d-]+\s*', '')) AS station,
+  ${display.colonia("colonia")} AS colonia,
+  alcaldia,
+  FORMAT('%.6f,%.6f', lat, lon) AS location,
+  num_bikes_available AS bikes,
+  num_docks_available AS free_docks,
+  capacity,
+  CASE status
+    WHEN 'empty' THEN 'Empty: no bikes'
+    WHEN 'full' THEN 'Full: no free docks'
+    WHEN 'low' THEN 'Low: 1-2 bikes'
+    WHEN 'ok' THEN 'Bikes and docks available'
+    ELSE 'Offline / not renting'
+  END AS status,
+  polled_at
+FROM ${ref("station_status_live")}

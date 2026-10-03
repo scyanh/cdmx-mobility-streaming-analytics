@@ -1,0 +1,18 @@
+config {
+  type: "assertion",
+  description: "Departures, arrivals and empty minutes add up the same in station_hour and zone_hour (no station lost or double counted by the zone join)."
+}
+
+WITH s AS (
+  SELECT SUM(departures) AS departures, SUM(arrivals) AS arrivals, SUM(empty_minutes) AS empty_minutes
+  FROM ${ref("station_hour")}
+), z AS (
+  SELECT SUM(departures) AS departures, SUM(arrivals) AS arrivals, SUM(empty_station_minutes) AS empty_minutes
+  FROM ${ref("zone_hour")}
+)
+SELECT
+  s.departures AS station_departures, z.departures AS zone_departures,
+  s.arrivals AS station_arrivals, z.arrivals AS zone_arrivals,
+  s.empty_minutes AS station_empty_minutes, z.empty_minutes AS zone_empty_minutes
+FROM s CROSS JOIN z
+WHERE s.departures != z.departures OR s.arrivals != z.arrivals OR s.empty_minutes != z.empty_minutes

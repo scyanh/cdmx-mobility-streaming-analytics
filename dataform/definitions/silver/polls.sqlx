@@ -1,0 +1,19 @@
+config {
+  type: "incremental",
+  schema: "mobility_silver",
+  description: "One row per poll that reached bronze. Gold samples every station at these instants, so a poller or feed outage shows up as unobserved time instead of being filled in.",
+  uniqueKey: ["poll_id"],
+  bigquery: { partitionBy: "DATE(polled_at)" },
+  assertions: { uniqueKey: ["poll_id"], nonNull: ["poll_id", "polled_at"] }
+}
+
+SELECT
+  poll_id,
+  MIN(polled_at) AS polled_at,
+  MAX(ingest_ts) AS last_ingest_ts
+FROM ${ref("station_status_raw")}
+WHERE poll_id IS NOT NULL
+${when(incremental(),
+  `AND ingest_ts > (SELECT TIMESTAMP_SUB(MAX(last_ingest_ts), INTERVAL ${dataform.projectConfig.vars.silver_overlap_minutes} MINUTE) FROM ${self()})
+   AND DATE(ingest_ts) >= (SELECT DATE_SUB(DATE(MAX(last_ingest_ts)), INTERVAL 1 DAY) FROM ${self()})`)}
+GROUP BY poll_id

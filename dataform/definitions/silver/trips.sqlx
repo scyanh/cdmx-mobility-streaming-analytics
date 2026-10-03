@@ -1,0 +1,47 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "table",
+  schema: "mobility_silver",
+  description: "ECOBICI's published trip history, one row per trip, parsed from mobility_ref.trips_raw (reference/load_trips.sh). Times are Mexico City local time, as published. Double stations are published as '192-193' and live as code 192, so codes keep their first number. Trips under 1 minute (undocking errors) or over 3 hours are dropped, as are rows whose dates do not parse. Each monthly file holds the trips that ended that month, so the first start day only has trips that crossed midnight; trips starting before the first full day are dropped.",
+  bigquery: {
+    partitionBy: "DATE(started_at)",
+    clusterBy: ["start_station_code"]
+  },
+  assertions: {
+    nonNull: ["started_at", "ended_at", "start_station_code", "end_station_code", "duration_min", "gender"],
+    rowConditions: [
+      "duration_min BETWEEN 1 AND 180",
+      "age IS NULL OR age BETWEEN 16 AND 90",
+      "gender IN ('Female', 'Male', 'Other', 'Not stated')"
+    ]
+  }
+}
+
+WITH parsed AS (
+  SELECT
+    SAFE.PARSE_DATETIME('%d/%m/%Y %H:%M:%S', CONCAT(start_date, ' ', start_time)) AS started_at,
+    SAFE.PARSE_DATETIME('%d/%m/%Y %H:%M:%S', CONCAT(end_date, ' ', end_time)) AS ended_at,
+    CAST(SAFE_CAST(REGEXP_EXTRACT(start_station, r'^\s*(\d+)') AS INT64) AS STRING) AS start_station_code,
+    CAST(SAFE_CAST(REGEXP_EXTRACT(end_station, r'^\s*(\d+)') AS INT64) AS STRING) AS end_station_code,
+    CASE TRIM(gender) WHEN 'F' THEN 'Female' WHEN 'M' THEN 'Male' WHEN 'O' THEN 'Other' ELSE 'Not stated' END AS gender,
+    SAFE_CAST(SAFE_CAST(age AS FLOAT64) AS INT64) AS age,
+    bike
+  FROM ${ref("trips_raw")}
+)
+
+SELECT
+  started_at,
+  ended_at,
+  DATETIME_DIFF(ended_at, started_at, SECOND) / 60 AS duration_min,
+  start_station_code,
+  end_station_code,
+  gender,
+  IF(age BETWEEN 16 AND 90, age, NULL) AS age,
+  bike
+FROM parsed
+WHERE started_at IS NOT NULL
+  AND ended_at IS NOT NULL
+  AND start_station_code IS NOT NULL
+  AND end_station_code IS NOT NULL
+  AND DATETIME_DIFF(ended_at, started_at, SECOND) BETWEEN 60 AND 10800
+  AND DATE(started_at) >= (SELECT MIN(DATE(ended_at)) FROM parsed)

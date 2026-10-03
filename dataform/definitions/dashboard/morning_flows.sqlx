@@ -1,0 +1,37 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Net flow of bikes per colonia in the weekday morning peak (7:00-9:59): arrivals minus departures per weekday. Positive colonias fill up (people ride in to work); negative ones drain (people ride out), which is why rebalancing trucks are needed.",
+  assertions: {
+    uniqueKey: ["colonia"]
+  }
+}
+
+WITH peak AS (
+  SELECT *
+  FROM ${ref("trips")}
+  WHERE EXTRACT(DAYOFWEEK FROM started_at) BETWEEN 2 AND 6
+    AND EXTRACT(HOUR FROM started_at) BETWEEN 7 AND 9
+),
+
+weekdays AS (
+  SELECT COUNT(DISTINCT DATE(started_at)) AS n FROM peak
+),
+
+moves AS (
+  SELECT s.colonia, s.alcaldia, -1 AS sign FROM peak AS p JOIN ${ref("station_lookup")} AS s ON s.station_code = p.start_station_code
+  UNION ALL
+  SELECT s.colonia, s.alcaldia, 1 FROM peak AS p JOIN ${ref("station_lookup")} AS s ON s.station_code = p.end_station_code
+)
+
+SELECT
+  colonia,
+  ANY_VALUE(alcaldia) AS alcaldia,
+  ROUND(COUNTIF(sign = -1) / ANY_VALUE(weekdays.n)) AS departures_per_morning,
+  ROUND(COUNTIF(sign = 1) / ANY_VALUE(weekdays.n)) AS arrivals_per_morning,
+  ROUND(SUM(sign) / ANY_VALUE(weekdays.n)) AS net_bikes_per_morning,
+  IF(SUM(sign) >= 0, 'Fills up (bikes arrive)', 'Drains (bikes leave)') AS flow
+FROM moves
+CROSS JOIN weekdays
+GROUP BY colonia

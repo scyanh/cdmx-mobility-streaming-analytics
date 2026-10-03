@@ -1,0 +1,62 @@
+config {
+  type: "incremental",
+  schema: "mobility_silver",
+  description: "One row per station state (event_id). Bronze can hold several copies of the same state (Pub/Sub redelivery, Scheduler retries, or an unchanged station seen again after Dataflow's 10-minute dedup window); this keeps the first copy received.",
+  uniqueKey: ["event_id"],
+  bigquery: {
+    partitionBy: "DATE(event_ts)",
+    clusterBy: ["station_id"],
+    updatePartitionFilter: "event_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 400 DAY)"
+  },
+  columns: {
+    event_id: "system-station-last_reported",
+    event_ts: "When the station reported this state",
+    bikes_total: "Available plus disabled bikes docked at the station",
+    first_seen_at: "First poll that saw this state",
+    last_ingest_ts: "Latest bronze ingest time folded into this row; the incremental watermark"
+  },
+  assertions: {
+    uniqueKey: ["event_id"],
+    nonNull: ["event_id", "station_id", "event_ts", "num_bikes_available", "num_docks_available", "first_seen_at"],
+    rowConditions: ["event_ts <= TIMESTAMP_ADD(first_seen_at, INTERVAL 5 MINUTE)", "bikes_total >= num_bikes_available"]
+  }
+}
+
+WITH new_rows AS (
+  SELECT
+    event_id,
+    -- Every copy of an event_id carries the same station state; keep the first one received.
+    ARRAY_AGG(STRUCT(
+      station_id, event_ts, num_bikes_available, num_bikes_disabled, num_docks_available, num_docks_disabled,
+      is_installed, is_renting, is_returning, station_name, lat, lon, capacity, warnings
+    ) ORDER BY ingest_ts LIMIT 1)[OFFSET(0)] AS s,
+    MIN(polled_at) AS first_seen_at,
+    MAX(ingest_ts) AS last_ingest_ts
+  FROM ${ref("station_status_raw")}
+  ${when(incremental(),
+    `WHERE ingest_ts > (SELECT TIMESTAMP_SUB(MAX(last_ingest_ts), INTERVAL ${dataform.projectConfig.vars.silver_overlap_minutes} MINUTE) FROM ${self()})
+       AND DATE(ingest_ts) >= (SELECT DATE_SUB(DATE(MAX(last_ingest_ts)), INTERVAL 1 DAY) FROM ${self()})`)}
+  GROUP BY event_id
+)
+
+SELECT
+  n.event_id,
+  n.s.station_id,
+  n.s.event_ts,
+  n.s.num_bikes_available,
+  n.s.num_bikes_disabled,
+  n.s.num_docks_available,
+  n.s.num_docks_disabled,
+  n.s.num_bikes_available + IFNULL(n.s.num_bikes_disabled, 0) AS bikes_total,
+  n.s.is_installed,
+  n.s.is_renting,
+  n.s.is_returning,
+  n.s.station_name,
+  n.s.lat,
+  n.s.lon,
+  n.s.capacity,
+  n.s.warnings,
+  ${incremental() ? "LEAST(n.first_seen_at, IFNULL(o.first_seen_at, n.first_seen_at))" : "n.first_seen_at"} AS first_seen_at,
+  ${incremental() ? "GREATEST(n.last_ingest_ts, IFNULL(o.last_ingest_ts, n.last_ingest_ts))" : "n.last_ingest_ts"} AS last_ingest_ts
+FROM new_rows AS n
+${when(incremental(), `LEFT JOIN ${self()} AS o USING (event_id)`)}

@@ -1,0 +1,15 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Trips per calendar day, for the trend over the year."
+}
+
+SELECT
+  DATE(started_at) AS day,
+  DATE_TRUNC(DATE(started_at), WEEK(MONDAY)) AS week,
+  DATE_TRUNC(DATE(started_at), MONTH) AS month,
+  IF(EXTRACT(DAYOFWEEK FROM started_at) IN (1, 7), 'Weekend day', 'Weekday') AS day_type,
+  COUNT(*) AS trips
+FROM ${ref("trips")}
+GROUP BY 1, 2, 3, 4

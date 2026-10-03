@@ -1,0 +1,9 @@
+config {
+  type: "assertion",
+  description: "No station reports two different states at the same instant: event_id encodes last_reported, so a collision would mean conflicting data under one ID."
+}
+
+SELECT station_id, event_ts, COUNT(*) AS states
+FROM ${ref("station_status_events")}
+GROUP BY station_id, event_ts
+HAVING COUNT(*) > 1

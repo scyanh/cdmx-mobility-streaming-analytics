@@ -1,0 +1,142 @@
+config {
+  type: "table",
+  schema: "mobility_gold",
+  description: "One row per station and hour. Availability is measured by sampling every station at each poll (one sample per minute) with the state it had last reported; trips are estimated from changes in docked bikes between consecutive reports.",
+  bigquery: {
+    partitionBy: "DATE(hour_start)",
+    clusterBy: ["colonia_id", "station_id"]
+  },
+  columns: {
+    hour_start: "Start of the hour (UTC)",
+    hour_start_local: "Start of the hour in Mexico City time (UTC-6, no daylight saving since 2022)",
+    sampled_minutes: "Minutes with a poll after the station's first report",
+    observed_minutes: "Sampled minutes whose state was reported within trusted_state_minutes by an installed station",
+    empty_minutes: "Observed minutes renting with no bike available",
+    full_minutes: "Observed minutes accepting returns with no free dock",
+    departures: "Bikes that left between consecutive reports, excluding drops of rebalance_min_bikes or more",
+    arrivals: "Bikes that arrived between consecutive reports, excluding rises of rebalance_min_bikes or more",
+    rebalanced_out: "Bikes removed in large drops (rebalancing trucks)",
+    rebalanced_in: "Bikes added in large rises (rebalancing trucks)"
+  },
+  assertions: {
+    uniqueKey: ["station_id", "hour_start"],
+    nonNull: ["station_id", "hour_start", "colonia_id"],
+    rowConditions: [
+      "sampled_minutes BETWEEN 1 AND 61",
+      "observed_minutes <= sampled_minutes",
+      "bikes_available_minutes + empty_minutes + not_renting_minutes = observed_minutes",
+      "docks_available_minutes + full_minutes <= observed_minutes",
+      "departures >= 0 AND arrivals >= 0"
+    ]
+  }
+}
+
+-- Retried polls can land in the same minute; one sample per minute keeps every minute equal.
+WITH poll_minutes AS (
+  SELECT MIN(polled_at) AS polled_at
+  FROM ${ref("polls")}
+  GROUP BY TIMESTAMP_TRUNC(polled_at, MINUTE)
+),
+
+timeline AS (
+  SELECT s.station_id, p.polled_at AS ts, 1 AS is_sample, NULL AS state
+  FROM ${ref("stations")} AS s
+  JOIN poll_minutes AS p ON p.polled_at >= s.first_event_ts
+  UNION ALL
+  SELECT
+    station_id, event_ts, 0,
+    STRUCT(event_ts, num_bikes_available, num_docks_available, is_installed, is_renting, is_returning)
+  FROM ${ref("station_status_events")}
+),
+
+-- As-of join: each sample takes the latest state reported at or before the poll.
+sampled AS (
+  SELECT
+    station_id,
+    ts AS polled_at,
+    LAST_VALUE(state IGNORE NULLS) OVER (
+      PARTITION BY station_id ORDER BY ts, is_sample ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS state,
+    is_sample
+  FROM timeline
+),
+
+samples AS (
+  SELECT
+    station_id,
+    polled_at,
+    state,
+    TIMESTAMP_DIFF(polled_at, state.event_ts, MINUTE) <= ${dataform.projectConfig.vars.trusted_state_minutes}
+      AND state.is_installed IS NOT FALSE AS trusted
+  FROM sampled
+  WHERE is_sample = 1 AND state IS NOT NULL
+),
+
+availability AS (
+  SELECT
+    station_id,
+    TIMESTAMP_TRUNC(polled_at, HOUR) AS hour_start,
+    COUNT(*) AS sampled_minutes,
+    COUNTIF(trusted) AS observed_minutes,
+    COUNTIF(trusted AND state.is_renting IS NOT FALSE AND state.num_bikes_available > 0) AS bikes_available_minutes,
+    COUNTIF(trusted AND state.is_renting IS NOT FALSE AND state.num_bikes_available = 0) AS empty_minutes,
+    COUNTIF(trusted AND state.is_returning IS NOT FALSE AND state.num_docks_available > 0) AS docks_available_minutes,
+    COUNTIF(trusted AND state.is_returning IS NOT FALSE AND state.num_docks_available = 0) AS full_minutes,
+    COUNTIF(trusted AND state.is_renting IS FALSE) AS not_renting_minutes,
+    AVG(IF(trusted, state.num_bikes_available, NULL)) AS avg_bikes_available,
+    AVG(IF(trusted, state.num_docks_available, NULL)) AS avg_docks_available
+  FROM samples
+  GROUP BY 1, 2
+),
+
+deltas AS (
+  SELECT
+    station_id,
+    event_ts,
+    bikes_total - LAG(bikes_total) OVER w AS delta,
+    -- A change after a long silence mixes many hours of activity; it is not attributed.
+    TIMESTAMP_DIFF(event_ts, LAG(event_ts) OVER w, MINUTE) <= ${dataform.projectConfig.vars.trusted_state_minutes} AS attributable
+  FROM ${ref("station_status_events")}
+  WINDOW w AS (PARTITION BY station_id ORDER BY event_ts)
+),
+
+flows AS (
+  SELECT
+    station_id,
+    TIMESTAMP_TRUNC(event_ts, HOUR) AS hour_start,
+    SUM(IF(delta < 0 AND -delta < ${dataform.projectConfig.vars.rebalance_min_bikes}, -delta, 0)) AS departures,
+    SUM(IF(delta > 0 AND delta < ${dataform.projectConfig.vars.rebalance_min_bikes}, delta, 0)) AS arrivals,
+    SUM(IF(delta <= -${dataform.projectConfig.vars.rebalance_min_bikes}, -delta, 0)) AS rebalanced_out,
+    SUM(IF(delta >= ${dataform.projectConfig.vars.rebalance_min_bikes}, delta, 0)) AS rebalanced_in,
+    COUNT(*) AS state_changes
+  FROM deltas
+  WHERE attributable
+  GROUP BY 1, 2
+)
+
+SELECT
+  a.station_id,
+  st.station_name,
+  st.colonia_id,
+  st.colonia,
+  st.alcaldia,
+  st.capacity,
+  a.hour_start,
+  DATETIME(a.hour_start, "America/Mexico_City") AS hour_start_local,
+  a.sampled_minutes,
+  a.observed_minutes,
+  a.bikes_available_minutes,
+  a.empty_minutes,
+  a.docks_available_minutes,
+  a.full_minutes,
+  a.not_renting_minutes,
+  a.avg_bikes_available,
+  a.avg_docks_available,
+  IFNULL(f.departures, 0) AS departures,
+  IFNULL(f.arrivals, 0) AS arrivals,
+  IFNULL(f.rebalanced_out, 0) AS rebalanced_out,
+  IFNULL(f.rebalanced_in, 0) AS rebalanced_in,
+  IFNULL(f.state_changes, 0) AS state_changes
+FROM availability AS a
+JOIN ${ref("stations")} AS st USING (station_id)
+LEFT JOIN flows AS f USING (station_id, hour_start)

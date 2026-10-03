@@ -1,0 +1,33 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "The 50 busiest station-to-station routes (round trips excluded), with trips per day and the median ride time."
+}
+
+WITH days AS (
+  SELECT COUNT(DISTINCT DATE(started_at)) AS n FROM ${ref("trips")}
+),
+
+routes AS (
+  SELECT
+    start_station_code,
+    end_station_code,
+    COUNT(*) AS trips,
+    APPROX_QUANTILES(duration_min, 2)[OFFSET(1)] AS median_minutes
+  FROM ${ref("trips")}
+  WHERE start_station_code != end_station_code
+  GROUP BY 1, 2
+)
+
+SELECT
+  CONCAT(a.station, ' → ', b.station) AS route,
+  a.colonia AS from_colonia,
+  b.colonia AS to_colonia,
+  ROUND(r.trips / days.n, 1) AS trips_per_day,
+  ROUND(r.median_minutes, 1) AS median_minutes
+FROM routes AS r
+CROSS JOIN days
+JOIN ${ref("station_lookup")} AS a ON a.station_code = r.start_station_code
+JOIN ${ref("station_lookup")} AS b ON b.station_code = r.end_station_code
+QUALIFY ROW_NUMBER() OVER (ORDER BY r.trips DESC) <= 50

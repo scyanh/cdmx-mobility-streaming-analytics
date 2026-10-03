@@ -1,0 +1,26 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Average trips started per hour of the day on a weekday vs a weekend day (trips divided by the number of days of that type, so the two lines are comparable)."
+}
+
+WITH typed AS (
+  SELECT
+    IF(EXTRACT(DAYOFWEEK FROM started_at) IN (1, 7), 'Weekend day', 'Weekday') AS day_type,
+    EXTRACT(HOUR FROM started_at) AS hour_of_day,
+    DATE(started_at) AS day
+  FROM ${ref("trips")}
+),
+
+days AS (
+  SELECT day_type, COUNT(DISTINCT day) AS days FROM typed GROUP BY day_type
+)
+
+SELECT
+  t.day_type,
+  t.hour_of_day,
+  ROUND(COUNT(*) / ANY_VALUE(d.days)) AS avg_trips
+FROM typed AS t
+JOIN days AS d USING (day_type)
+GROUP BY t.day_type, t.hour_of_day

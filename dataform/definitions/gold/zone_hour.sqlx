@@ -1,0 +1,43 @@
+config {
+  type: "table",
+  schema: "mobility_gold",
+  description: "One row per colonia and hour: availability and trips of the ECOBICI stations in it.",
+  bigquery: {
+    partitionBy: "DATE(hour_start)",
+    clusterBy: ["colonia_id"]
+  },
+  columns: {
+    pct_time_empty: "Share of observed station-minutes with no bike to rent",
+    pct_time_full: "Share of observed station-minutes with no dock to return to",
+    coverage: "Observed station-minutes over sampled station-minutes",
+    avg_bikes_available: "Bikes available in the colonia on average during the hour (sum of station averages)"
+  },
+  assertions: {
+    uniqueKey: ["colonia_id", "hour_start"],
+    nonNull: ["colonia_id", "colonia", "alcaldia", "hour_start"],
+    rowConditions: ["pct_time_empty BETWEEN 0 AND 1", "pct_time_full BETWEEN 0 AND 1", "coverage BETWEEN 0 AND 1"]
+  }
+}
+
+SELECT
+  colonia_id,
+  ANY_VALUE(colonia) AS colonia,
+  ANY_VALUE(alcaldia) AS alcaldia,
+  hour_start,
+  ANY_VALUE(hour_start_local) AS hour_start_local,
+  COUNT(*) AS stations,
+  COUNTIF(observed_minutes > 0) AS stations_observed,
+  SUM(capacity) AS docks,
+  SUM(observed_minutes) AS observed_station_minutes,
+  SUM(empty_minutes) AS empty_station_minutes,
+  SUM(full_minutes) AS full_station_minutes,
+  IFNULL(SAFE_DIVIDE(SUM(empty_minutes), SUM(observed_minutes)), 0) AS pct_time_empty,
+  IFNULL(SAFE_DIVIDE(SUM(full_minutes), SUM(observed_minutes)), 0) AS pct_time_full,
+  IFNULL(SAFE_DIVIDE(SUM(observed_minutes), SUM(sampled_minutes)), 0) AS coverage,
+  SUM(avg_bikes_available) AS avg_bikes_available,
+  SUM(departures) AS departures,
+  SUM(arrivals) AS arrivals,
+  SUM(rebalanced_out) AS rebalanced_out,
+  SUM(rebalanced_in) AS rebalanced_in
+FROM ${ref("station_hour")}
+GROUP BY colonia_id, hour_start

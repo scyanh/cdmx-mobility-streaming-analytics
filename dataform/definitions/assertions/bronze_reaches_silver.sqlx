@@ -1,0 +1,14 @@
+config {
+  type: "assertion",
+  description: "Every state that reached bronze before the silver watermark (minus the overlap) is in silver. Catches a broken incremental filter."
+}
+
+WITH watermark AS (
+  SELECT TIMESTAMP_SUB(MAX(last_ingest_ts), INTERVAL ${dataform.projectConfig.vars.silver_overlap_minutes} MINUTE) AS ts
+  FROM ${ref("station_status_events")}
+)
+SELECT b.event_id
+FROM ${ref("station_status_raw")} AS b, watermark
+WHERE b.ingest_ts <= watermark.ts
+  AND DATE(b.ingest_ts) >= DATE_SUB(DATE(watermark.ts), INTERVAL 2 DAY)
+  AND b.event_id NOT IN (SELECT event_id FROM ${ref("station_status_events")})

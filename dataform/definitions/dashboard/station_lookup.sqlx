@@ -1,0 +1,21 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Live-feed stations keyed by the numeric code the trip history uses ('001' in the feed, '1' in silver.trips), with a short display name and a 'lat,lon' field for map charts.",
+  assertions: {
+    uniqueKey: ["station_code"]
+  }
+}
+
+SELECT
+  CAST(CAST(station_code AS INT64) AS STRING) AS station_code,
+  -- 'CE-192-193 Rubén Darío.Reforma' -> 'Rubén Darío.Reforma'
+  TRIM(REGEXP_REPLACE(station_name, r'^CE-[\d-]+\s*', '')) AS station,
+  ${display.colonia("colonia")} AS colonia,
+  alcaldia,
+  lat,
+  lon,
+  FORMAT('%.6f,%.6f', lat, lon) AS location
+FROM ${ref("stations")}
+WHERE station_code IS NOT NULL

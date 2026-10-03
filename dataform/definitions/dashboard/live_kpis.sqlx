@@ -1,0 +1,14 @@
+config {
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Headline numbers of the system right now (one row)."
+}
+
+SELECT
+  COUNT(*) AS stations,
+  SUM(num_bikes_available) AS bikes_available,
+  COUNTIF(status = 'empty') AS empty_stations,
+  COUNTIF(status = 'full') AS full_stations,
+  COUNTIF(status IN ('offline', 'not renting')) AS offline_stations,
+  MAX(polled_at) AS last_update
+FROM ${ref("station_status_live")}

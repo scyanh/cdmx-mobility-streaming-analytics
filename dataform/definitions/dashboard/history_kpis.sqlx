@@ -1,0 +1,17 @@
+config {
+  disabled: dataform.projectConfig.vars.include_history !== "true",
+  type: "view",
+  schema: "mobility_dashboard",
+  description: "Headline numbers of the trip history (one row)."
+}
+
+SELECT
+  COUNT(*) AS trips,
+  MIN(DATE(started_at)) AS first_day,
+  MAX(DATE(started_at)) AS last_day,
+  ROUND(COUNTIF(EXTRACT(DAYOFWEEK FROM started_at) BETWEEN 2 AND 6)
+    / COUNT(DISTINCT IF(EXTRACT(DAYOFWEEK FROM started_at) BETWEEN 2 AND 6, DATE(started_at), NULL))) AS trips_per_weekday,
+  ROUND(APPROX_QUANTILES(duration_min, 2)[OFFSET(1)], 1) AS median_trip_minutes,
+  ROUND(COUNTIF(gender = 'Female') / COUNTIF(gender IN ('Female', 'Male', 'Other')), 3) AS share_female,
+  COUNT(DISTINCT start_station_code) AS stations_used
+FROM ${ref("trips")}

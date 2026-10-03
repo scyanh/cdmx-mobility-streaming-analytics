@@ -1,0 +1,96 @@
+config {
+  type: "table",
+  schema: "mobility_gold",
+  description: "Typical week by colonia: for each day type (weekday or weekend) and hour of day, how often stations run out of bikes and an estimate of the trips that could not start. Where riders find no bike is where Tlanova could offer the trip instead.",
+  columns: {
+    days_observed: "Distinct days with observed data in this colonia, day type and hour",
+    departures_per_hour: "Departures in a typical hour of this slot: each station's departures per observed minute, times 60, summed over the colonia",
+    est_unmet_departures_per_hour: "Trips per hour that could not start: each station's departure rate while it had bikes, times its minutes empty, normalized like departures_per_hour",
+    est_blocked_returns_per_hour: "Same estimate for riders who found no free dock",
+    opportunity_rank: "1 = most unmet departures per hour among all colonia, day type and hour combinations",
+    confidence: "'low' when fewer than min_days_confident days back the estimate"
+  },
+  assertions: {
+    uniqueKey: ["colonia_id", "day_type", "hour_of_day"],
+    nonNull: ["colonia_id", "day_type", "hour_of_day", "days_observed"],
+    rowConditions: ["est_unmet_departures_per_hour >= 0", "pct_time_empty BETWEEN 0 AND 1", "hour_of_day BETWEEN 0 AND 23"]
+  }
+}
+
+WITH station_pattern AS (
+  SELECT
+    station_id,
+    colonia_id,
+    ANY_VALUE(colonia) AS colonia,
+    ANY_VALUE(alcaldia) AS alcaldia,
+    IF(EXTRACT(DAYOFWEEK FROM hour_start_local) IN (1, 7), "weekend", "weekday") AS day_type,
+    EXTRACT(HOUR FROM hour_start_local) AS hour_of_day,
+    COUNT(DISTINCT IF(observed_minutes > 0, DATE(hour_start_local), NULL)) AS days,
+    SUM(departures) AS departures,
+    SUM(arrivals) AS arrivals,
+    SUM(observed_minutes) AS observed_minutes,
+    SUM(bikes_available_minutes) AS bikes_available_minutes,
+    SUM(empty_minutes) AS empty_minutes,
+    SUM(docks_available_minutes) AS docks_available_minutes,
+    SUM(full_minutes) AS full_minutes
+  FROM ${ref("station_hour")}
+  GROUP BY station_id, colonia_id, day_type, hour_of_day
+),
+
+-- A station that was empty almost all the time has no departure rate of its own; it borrows
+-- the rate of its colonia at the same day type and hour.
+rates AS (
+  SELECT
+    *,
+    SAFE_DIVIDE(SUM(departures) OVER zone, SUM(bikes_available_minutes) OVER zone) AS zone_departure_rate,
+    SAFE_DIVIDE(SUM(arrivals) OVER zone, SUM(docks_available_minutes) OVER zone) AS zone_arrival_rate
+  FROM station_pattern
+  WINDOW zone AS (PARTITION BY colonia_id, day_type, hour_of_day)
+),
+
+estimates AS (
+  SELECT
+    *,
+    empty_minutes * IFNULL(IF(bikes_available_minutes >= 30, departures / bikes_available_minutes, zone_departure_rate), 0) AS est_unmet_departures,
+    full_minutes * IFNULL(IF(docks_available_minutes >= 30, arrivals / docks_available_minutes, zone_arrival_rate), 0) AS est_blocked_returns
+  FROM rates
+),
+
+-- Per observed hour rather than per day: partial hours and poller outages would otherwise
+-- read as quiet hours.
+hourly AS (
+  SELECT
+    *,
+    departures * 60 / NULLIF(observed_minutes, 0) AS departures_per_hour,
+    arrivals * 60 / NULLIF(observed_minutes, 0) AS arrivals_per_hour,
+    est_unmet_departures * 60 / NULLIF(observed_minutes, 0) AS unmet_per_hour,
+    est_blocked_returns * 60 / NULLIF(observed_minutes, 0) AS blocked_per_hour
+  FROM estimates
+),
+
+zones AS (
+  SELECT
+    colonia_id,
+    ANY_VALUE(colonia) AS colonia,
+    ANY_VALUE(alcaldia) AS alcaldia,
+    day_type,
+    hour_of_day,
+    COUNT(*) AS stations,
+    MAX(days) AS days_observed,
+    SUM(observed_minutes) / 60 AS observed_station_hours,
+    IFNULL(SUM(departures_per_hour), 0) AS departures_per_hour,
+    IFNULL(SUM(arrivals_per_hour), 0) AS arrivals_per_hour,
+    IFNULL(SAFE_DIVIDE(SUM(empty_minutes), SUM(observed_minutes)), 0) AS pct_time_empty,
+    IFNULL(SAFE_DIVIDE(SUM(full_minutes), SUM(observed_minutes)), 0) AS pct_time_full,
+    IFNULL(SUM(unmet_per_hour), 0) AS est_unmet_departures_per_hour,
+    IFNULL(SUM(blocked_per_hour), 0) AS est_blocked_returns_per_hour
+  FROM hourly
+  GROUP BY colonia_id, day_type, hour_of_day
+)
+
+SELECT
+  *,
+  RANK() OVER (ORDER BY est_unmet_departures_per_hour DESC) AS opportunity_rank,
+  RANK() OVER (PARTITION BY day_type, hour_of_day ORDER BY est_unmet_departures_per_hour DESC) AS rank_in_hour,
+  IF(days_observed >= ${dataform.projectConfig.vars.min_days_confident}, "ok", "low") AS confidence
+FROM zones

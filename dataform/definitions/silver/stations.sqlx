@@ -1,0 +1,44 @@
+config {
+  type: "table",
+  schema: "mobility_silver",
+  description: "One row per station with its latest attributes and the colonia (zone) it sits in.",
+  assertions: {
+    uniqueKey: ["station_id"],
+    nonNull: ["station_id", "geog", "colonia_id", "colonia", "alcaldia"]
+  }
+}
+
+WITH latest AS (
+  SELECT
+    station_id,
+    ARRAY_AGG(STRUCT(station_name, lat, lon, capacity) ORDER BY event_ts DESC LIMIT 1)[OFFSET(0)] AS s,
+    MIN(event_ts) AS first_event_ts,
+    MAX(event_ts) AS last_event_ts
+  FROM ${ref("station_status_events")}
+  WHERE lat IS NOT NULL
+  GROUP BY station_id
+),
+
+located AS (
+  SELECT *, ST_GEOGPOINT(s.lon, s.lat) AS geog FROM latest
+)
+
+SELECT
+  l.station_id,
+  l.s.station_name,
+  REGEXP_EXTRACT(l.s.station_name, r'^CE-(\d+)') AS station_code,
+  l.s.capacity,
+  l.s.lat,
+  l.s.lon,
+  l.geog,
+  c.colonia_id,
+  c.colonia,
+  c.alcaldia,
+  l.first_event_ts,
+  l.last_event_ts
+FROM located AS l
+-- Stations on a street can fall in the gap between two colonia polygons, so the nearest
+-- colonia within 150 m is accepted; inside a polygon the distance is zero.
+LEFT JOIN ${ref("colonias")} AS c
+  ON ST_DWITHIN(c.geog, l.geog, 150)
+QUALIFY ROW_NUMBER() OVER (PARTITION BY l.station_id ORDER BY ST_DISTANCE(c.geog, l.geog), c.colonia_id) = 1

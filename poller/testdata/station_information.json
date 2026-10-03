@@ -1,0 +1,59 @@
+{
+ "last_updated": 1791045128,
+ "ttl": 10,
+ "data": {
+  "stations": [
+   {
+    "station_id": "1",
+    "external_id": "e961269c-34c4-4b70-8e30-a51aa95a8429",
+    "name": "CE-710 Molino del Rey - Glorieta de la Lealtad",
+    "short_name": "710",
+    "lat": 19.416795,
+    "lon": -99.192508,
+    "rental_methods": [
+     "CREDITCARD",
+     "KEY"
+    ],
+    "capacity": 39,
+    "electric_bike_surcharge_waiver": false,
+    "is_charging": false,
+    "eightd_has_key_dispenser": false,
+    "has_kiosk": true
+   },
+   {
+    "station_id": "5",
+    "external_id": "3ea89109-d2f3-46eb-9c41-c43742050340",
+    "name": "CE-407  Prolongación Xochicalco-General Emiliano Zapata",
+    "short_name": "407",
+    "lat": 19.36726591257277,
+    "lon": -99.15865559132271,
+    "rental_methods": [
+     "CREDITCARD",
+     "KEY"
+    ],
+    "capacity": 19,
+    "electric_bike_surcharge_waiver": false,
+    "is_charging": false,
+    "eightd_has_key_dispenser": false,
+    "has_kiosk": true
+   },
+   {
+    "station_id": "6",
+    "external_id": "ba78b703-4e5a-44bd-ab2c-1eedc71e11c3",
+    "name": "CE-428  Prolongación Uxmal-Av. Popocatépetl (Eje 8)",
+    "short_name": "428",
+    "lat": 19.363404,
+    "lon": -99.160395,
+    "rental_methods": [
+     "CREDITCARD",
+     "KEY"
+    ],
+    "capacity": 27,
+    "electric_bike_surcharge_waiver": false,
+    "is_charging": false,
+    "eightd_has_key_dispenser": false,
+    "has_kiosk": true
+   }
+  ]
+ }
+}
